@@ -1,19 +1,20 @@
-
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { MOCK_ORDERS } from '../services/mockData';
+import { MOCK_ORDERS, MOCK_USERS } from '../services/mockData';
 import { analyzeFault, AnalysisResult } from '../services/geminiService';
-import { OrderStatus, RepairOrder } from '../types';
+import { OrderStatus, RepairOrder, User } from '../types';
+import { sendNotification } from '../services/notificationService';
 import { 
   Cpu, Activity, Truck, Save, CheckCircle, 
   AlertTriangle, Microscope, Wrench, ClipboardCheck, 
   ChevronRight, RefreshCw, CircuitBoard, HardDrive, Zap, Server, 
   Eye, Code, ArrowLeft, BrainCircuit, PenLine, Plus, Trash2, Printer, FileText, X, FileCheck, Play, Download,
-  CreditCard, Package
+  CreditCard, Package, User as UserIcon, UserPlus
 } from 'lucide-react';
 import { STATUS_COLORS, STATUS_LABELS } from '../constants';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { useAuth } from '../components/AuthContext';
 
 // Workflow Steps
 const STEPS = [
@@ -554,6 +555,7 @@ const RepairReportModal: React.FC<{
 const OrderDetail: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { usersList, user } = useAuth();
   const [order, setOrder] = useState<RepairOrder | null>(null);
   const [loading, setLoading] = useState(true);
   
@@ -571,6 +573,9 @@ const OrderDetail: React.FC = () => {
   // Feedback
   const [saveStatus, setSaveStatus] = useState('');
 
+  // Reassign State
+  const [isReassigning, setIsReassigning] = useState(false);
+
   useEffect(() => {
     // Simulate API Fetch
     setTimeout(() => {
@@ -583,7 +588,7 @@ const OrderDetail: React.FC = () => {
     }, 500);
   }, [id]);
 
-  const handleSaveOrder = (updates?: Partial<RepairOrder>) => {
+  const handleSaveOrder = async (updates?: Partial<RepairOrder>, notifyType?: 'ORDER_ASSIGNED' | 'ORDER_CLOSED') => {
     if (!order) return;
     
     // 1. Update the order object locally
@@ -601,17 +606,30 @@ const OrderDetail: React.FC = () => {
     }
     
     setOrder(updatedOrder);
+
+    // 3. Trigger Notifications if needed
+    if (notifyType) {
+       const targetUser = updatedOrder.assigned_to ? usersList.find(u => u.id === updatedOrder.assigned_to) : undefined;
+       await sendNotification(notifyType, updatedOrder, targetUser);
+    }
+
     setSaveStatus('工单已保存!');
     setTimeout(() => setSaveStatus(''), 3000);
     
     // Disable edit mode if active
     setIsEditingReceived(false);
+    setIsReassigning(false);
   };
 
   const updateStatus = (newStatus: OrderStatus, message: string) => {
-     handleSaveOrder({ status: newStatus });
+     handleSaveOrder({ status: newStatus }, newStatus === OrderStatus.CLOSED ? 'ORDER_CLOSED' : undefined);
      setSaveStatus(message);
      setTimeout(() => setSaveStatus(''), 3000);
+  };
+
+  const handleReassign = (userIdStr: string) => {
+    const newAssigneeId = userIdStr ? Number(userIdStr) : undefined;
+    handleSaveOrder({ assigned_to: newAssigneeId }, 'ORDER_ASSIGNED');
   };
 
   const handleSaveReport = (reportData: any) => {
@@ -633,9 +651,9 @@ const OrderDetail: React.FC = () => {
       const configStr = order.received_config_json || order.shipment_config_json || "配置未知";
       const result = await analyzeFault(order.fault_description, configStr);
       setAnalysisResult(result);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("AI 分析失败");
+      alert(e.message || "AI 分析失败: 请在系统管理中配置 API Key");
     } finally {
       setAiAnalyzing(false);
     }
@@ -734,15 +752,57 @@ const OrderDetail: React.FC = () => {
         </div>
       </div>
 
-      {/* Workflow Actions Panel (NEW) */}
+      {/* Workflow Actions & Reassign Panel (NEW) */}
       <div className="bg-gradient-to-r from-blue-50 to-white p-4 rounded-lg border border-blue-100 flex flex-col sm:flex-row justify-between items-center gap-4 shadow-sm">
-         <div className="flex items-center">
-            <Activity className="w-5 h-5 text-blue-600 mr-2" />
-            <div>
-               <h3 className="font-bold text-gray-800 text-sm">工单流转控制 (Workflow)</h3>
-               <p className="text-xs text-gray-500">当前阶段: <span className="font-bold text-blue-700">{STATUS_LABELS[order.status]}</span></p>
+         <div className="flex items-center gap-6">
+            <div className="flex items-center">
+              <Activity className="w-5 h-5 text-blue-600 mr-2" />
+              <div>
+                 <h3 className="font-bold text-gray-800 text-sm">工单流转控制 (Workflow)</h3>
+                 <p className="text-xs text-gray-500">当前阶段: <span className="font-bold text-blue-700">{STATUS_LABELS[order.status]}</span></p>
+              </div>
+            </div>
+            
+            {/* Reassign Control */}
+            <div className="border-l border-gray-300 pl-6 flex items-center">
+               <UserIcon className="w-4 h-4 text-gray-500 mr-2" />
+               <div className="text-sm flex items-center">
+                 <span className="text-gray-500 mr-2">处理人:</span>
+                 {isReassigning ? (
+                   <select 
+                     className="border border-blue-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                     value={order.assigned_to || ''}
+                     onChange={(e) => handleReassign(e.target.value)}
+                     autoFocus
+                     onBlur={() => setIsReassigning(false)}
+                   >
+                     <option value="">-- 未分配 --</option>
+                     {usersList.map(u => (
+                       <option key={u.id} value={u.id}>{u.username}</option>
+                     ))}
+                   </select>
+                 ) : (
+                   <button 
+                     onClick={() => setIsReassigning(true)}
+                     className="font-bold text-gray-800 hover:text-blue-600 underline decoration-dashed underline-offset-4"
+                     title="点击转派工单"
+                   >
+                     {order.assigned_to ? usersList.find(u => u.id === order.assigned_to)?.username || 'Unknown' : '未分配'}
+                   </button>
+                 )}
+                 {/* Self-Assign Button if Unassigned */}
+                 {!order.assigned_to && (
+                    <button
+                      onClick={() => handleReassign(String(user?.id))}
+                      className="ml-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded shadow hover:bg-blue-700 animate-pulse font-medium"
+                    >
+                       我要接单
+                    </button>
+                 )}
+               </div>
             </div>
          </div>
+
          <div className="flex space-x-2 items-center">
             {order.status === OrderStatus.CHECKING && (
                <button 

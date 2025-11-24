@@ -3,8 +3,9 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { MOCK_ORDERS, MOCK_USERS, MOCK_ASSETS } from '../services/mockData';
 import { STATUS_COLORS, STATUS_LABELS } from '../constants';
+import { sendNotification } from '../services/notificationService';
 import { Plus, Search, X, User, Server, AlertCircle, Activity, LayoutGrid, List, Clock, MoreHorizontal, Download, Upload, FileSpreadsheet } from 'lucide-react';
-import { OrderStatus, RepairOrder, DiscoveryPhase } from '../types';
+import { OrderStatus, RepairOrder, DiscoveryPhase, SystemSettings } from '../types';
 import { useTheme } from '../components/ThemeContext';
 
 const ServiceOrders: React.FC = () => {
@@ -46,7 +47,7 @@ const ServiceOrders: React.FC = () => {
     return MOCK_USERS.find(u => u.id === id)?.username || '未知';
   };
 
-  const handleCreateOrder = () => {
+  const handleCreateOrder = async () => {
     if (!formData.machine_sn || !formData.fault_description || !formData.customer_name) {
       alert("请填写所有必填项 (SN, 客户名称, 故障描述)");
       return;
@@ -55,6 +56,14 @@ const ServiceOrders: React.FC = () => {
     // 1. Auto-Fetch Asset Data
     const asset = MOCK_ASSETS.find(a => a.machine_sn === formData.machine_sn);
     
+    // 2. Determine Default Assignee
+    let defaultAssigneeId: number | undefined = undefined;
+    const sysSettingsStr = localStorage.getItem('slss_system_settings');
+    if (sysSettingsStr) {
+       const settings: SystemSettings = JSON.parse(sysSettingsStr);
+       defaultAssigneeId = settings.defaultAssigneeId;
+    }
+
     const orderId = Math.floor(Math.random() * 100000);
     const order: RepairOrder = {
       id: orderId,
@@ -72,6 +81,7 @@ const ServiceOrders: React.FC = () => {
       received_config_json: asset ? asset.factory_config_json : undefined, // Default sync to shipment
 
       status: OrderStatus.CHECKING, // Automatically start checking/diagnosis
+      assigned_to: defaultAssigneeId,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -80,6 +90,10 @@ const ServiceOrders: React.FC = () => {
     MOCK_ORDERS.unshift(order);
     setOrders([order, ...orders]);
     
+    // 3. Trigger Notification
+    const targetUser = defaultAssigneeId ? MOCK_USERS.find(u => u.id === defaultAssigneeId) : undefined;
+    await sendNotification('ORDER_CREATED', order, targetUser);
+
     // Close Modal & Redirect immediately
     setShowModal(false);
     setFormData({
@@ -291,7 +305,7 @@ const ServiceOrders: React.FC = () => {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">工单号</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">客户 / SN</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">发现阶段</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">当前处理人</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">创建日期</th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
@@ -308,9 +322,9 @@ const ServiceOrders: React.FC = () => {
                         <div className="text-xs text-gray-500 font-mono">{order.machine_sn}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
-                           {order.discovery_phase}
-                         </span>
+                         <div className="flex items-center">
+                            <User className="w-3 h-3 mr-1"/> {getAssigneeName(order.assigned_to)}
+                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${STATUS_COLORS[order.status]}`}>

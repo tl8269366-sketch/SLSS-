@@ -1,13 +1,13 @@
-
 import React, { useState, useEffect } from 'react';
-import { MOCK_USERS } from '../services/mockData';
-import { UserRole, User, Permission, DatabaseConfig, RedisConfig, SystemStatus, AIConfig } from '../types';
+import { useAuth } from '../components/AuthContext';
+import { UserRole, User, Permission, DatabaseConfig, RedisConfig, SystemStatus, AIConfig, NotificationConfig, SystemSettings } from '../types';
 import { testAIConnection } from '../services/geminiService';
+import { getNotificationConfig, saveNotificationConfig } from '../services/notificationService';
 import { useTheme, THEMES, ThemeColor } from '../components/ThemeContext';
 import { 
   Shield, UserCheck, Settings, Save, Key, Globe, Cpu, AlertCircle, CheckCircle, 
   Database, Activity, Server, HardDrive, Zap, RefreshCw, Lock, Radio, Network,
-  Palette
+  Palette, UserPlus, Trash2, Check, X, Bell, Mail, MessageSquare, List
 } from 'lucide-react';
 import { ROLE_LABELS, PERMISSION_LABELS } from '../constants';
 
@@ -27,6 +27,14 @@ const StatusIndicator = ({ status, text }: { status: 'good' | 'warning' | 'error
     </div>
   );
 };
+
+// SMTP Presets
+const SMTP_PRESETS = [
+  { name: '腾讯企业邮', host: 'smtp.exmail.qq.com', port: 465, secure: true },
+  { name: 'QQ 邮箱', host: 'smtp.qq.com', port: 465, secure: true },
+  { name: '网易 163', host: 'smtp.163.com', port: 465, secure: true },
+  { name: 'Gmail', host: 'smtp.gmail.com', port: 465, secure: true },
+];
 
 // Provider Presets with Correct Endpoints
 const PROVIDER_PRESETS: Record<string, { label: string, baseUrl: string, models: string[], icon: any, desc: string }> = {
@@ -76,11 +84,11 @@ const PROVIDER_PRESETS: Record<string, { label: string, baseUrl: string, models:
 
 const AdminPanel: React.FC = () => {
   // -- Navigation State --
-  const [activeTab, setActiveTab] = useState<'status' | 'database' | 'ai' | 'users' | 'general'>('status');
+  const [activeTab, setActiveTab] = useState<'status' | 'database' | 'ai' | 'notification' | 'users' | 'general'>('status');
   const { theme, setTheme, themeConfig } = useTheme();
+  const { usersList, updateUserStatus, deleteUser, addUser } = useAuth(); 
 
   // -- Config States --
-  const [users, setUsers] = useState<User[]>(MOCK_USERS);
   
   const [dbConfig, setDbConfig] = useState<DatabaseConfig>({
     type: 'mysql',
@@ -105,6 +113,15 @@ const AdminPanel: React.FC = () => {
     apiKey: ''
   });
 
+  const [notifyConfig, setNotifyConfig] = useState<NotificationConfig>(getNotificationConfig());
+
+  const [sysSettings, setSysSettings] = useState<SystemSettings>({
+    appName: 'SLSS',
+    maintenanceMode: false,
+    logRetentionDays: 30,
+    defaultAssigneeId: undefined
+  });
+
   // -- System Status Mock State --
   const [sysStatus, setSysStatus] = useState<SystemStatus>({
     cpuUsage: 12,
@@ -115,6 +132,10 @@ const AdminPanel: React.FC = () => {
     redisStatus: 'connected',
     activeConnections: 18
   });
+
+  // -- Add User Modal State --
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [newUserForm, setNewUserForm] = useState({ username: '', password: '', role: UserRole.TECHNICIAN });
 
   // -- Feedback State --
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
@@ -135,6 +156,8 @@ const AdminPanel: React.FC = () => {
     loadConfig('slss_ai_config', setAiConfig);
     loadConfig('slss_db_config', setDbConfig);
     loadConfig('slss_redis_config', setRedisConfig);
+    loadConfig('slss_system_settings', setSysSettings);
+    // Notification config loaded via getNotificationConfig initial state
   }, []);
 
   // Simulate Live System Status Updates
@@ -157,7 +180,11 @@ const AdminPanel: React.FC = () => {
 
   const handleSave = (key: string, data: any, msg: string) => {
     try {
-      localStorage.setItem(key, JSON.stringify(data));
+      if (key === 'slss_notification_config') {
+         saveNotificationConfig(data);
+      } else {
+         localStorage.setItem(key, JSON.stringify(data));
+      }
       setSaveStatus({ type: 'success', message: msg });
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (e: any) {
@@ -183,8 +210,6 @@ const AdminPanel: React.FC = () => {
   const handleTestAI = async () => {
     setIsTestLoading(true);
     try {
-      // Save config temporarily first so test uses current values if we reload logic
-      // But here we pass config directly
       const result = await testAIConnection(aiConfig);
       setSaveStatus({ type: 'success', message: `AI 连接成功: ${result}` });
     } catch (e: any) {
@@ -205,18 +230,41 @@ const AdminPanel: React.FC = () => {
     }));
   };
 
-  const togglePermission = (userId: number, perm: Permission) => {
-    setUsers(users.map(u => {
-      if (u.id !== userId) return u;
-      const hasPerm = u.permissions.includes(perm);
-      return {
-        ...u,
-        permissions: hasPerm 
-          ? u.permissions.filter(p => p !== perm) 
-          : [...u.permissions, perm]
-      };
+  const applySmtpPreset = (preset: typeof SMTP_PRESETS[0]) => {
+    setNotifyConfig(prev => ({
+      ...prev,
+      smtp: {
+        ...prev.smtp,
+        host: preset.host,
+        port: preset.port,
+        secure: preset.secure
+      }
     }));
+    setSaveStatus({ type: 'success', message: `已应用 ${preset.name} 预设` });
+    setTimeout(() => setSaveStatus(null), 2000);
   };
+
+  const handleAddUser = () => {
+    if (!newUserForm.username || !newUserForm.password) {
+      alert("请填写完整信息");
+      return;
+    }
+    addUser({
+      username: newUserForm.username,
+      password: newUserForm.password,
+      role: newUserForm.role,
+      status: 'active', // Admin added users are active by default
+      permissions: [] // Default perms handled in AuthContext
+    });
+    setShowAddUserModal(false);
+    setNewUserForm({ username: '', password: '', role: UserRole.TECHNICIAN });
+    setSaveStatus({ type: 'success', message: '用户创建成功' });
+    setTimeout(() => setSaveStatus(null), 3000);
+  };
+
+  // Split users for display
+  const pendingUsers = usersList.filter(u => u.status === 'pending');
+  const activeUsers = usersList.filter(u => u.status !== 'pending');
 
   // -- Renders --
 
@@ -243,10 +291,11 @@ const AdminPanel: React.FC = () => {
           <h2 className="text-xs font-bold text-gray-400 uppercase mb-4 px-4 tracking-wider">系统设置</h2>
           <nav>
             <SidebarItem id="status" icon={Activity} label="系统监控概览" />
+            <SidebarItem id="general" icon={Settings} label="基础参数设置" />
             <SidebarItem id="database" icon={Database} label="数据库与缓存" />
             <SidebarItem id="ai" icon={Network} label="AI 智能网关" />
+            <SidebarItem id="notification" icon={Bell} label="通知与集成" />
             <SidebarItem id="users" icon={UserCheck} label="用户权限管理" />
-            <SidebarItem id="general" icon={Settings} label="基础参数设置" />
           </nav>
         </div>
       </div>
@@ -261,6 +310,7 @@ const AdminPanel: React.FC = () => {
                {activeTab === 'status' && <><Activity className={`mr-2 ${themeConfig.classes.text}`} /> 系统运行状态</>}
                {activeTab === 'database' && <><Database className={`mr-2 ${themeConfig.classes.text}`} /> 数据源连接配置</>}
                {activeTab === 'ai' && <><Network className="mr-2 text-purple-600" /> AI 模型服务渠道</>}
+               {activeTab === 'notification' && <><Bell className="mr-2 text-orange-600" /> 消息通知集成</>}
                {activeTab === 'users' && <><UserCheck className={`mr-2 ${themeConfig.classes.text}`} /> 人员授权与安全</>}
                {activeTab === 'general' && <><Settings className="mr-2 text-gray-600" /> 基础系统参数</>}
              </h1>
@@ -335,6 +385,110 @@ const AdminPanel: React.FC = () => {
                      </div>
                    </div>
                  </div>
+              </div>
+            )}
+
+            {/* --- TAB: NOTIFICATION --- */}
+            {activeTab === 'notification' && (
+              <div className="space-y-6 animate-in fade-in">
+                {/* SMTP Config */}
+                <div className="bg-white border border-gray-200 rounded-lg p-6">
+                   <div className="flex justify-between items-center mb-4 border-b pb-2">
+                      <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                        <Mail className="w-5 h-5 mr-2 text-blue-600" /> 邮件通知服务 (SMTP/POP3)
+                      </h3>
+                      {/* Presets */}
+                      <div className="flex space-x-2">
+                        {SMTP_PRESETS.map(p => (
+                          <button 
+                            key={p.name}
+                            onClick={() => applySmtpPreset(p)}
+                            className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded border border-gray-300 transition-colors"
+                          >
+                            {p.name}
+                          </button>
+                        ))}
+                      </div>
+                   </div>
+                   
+                   <div className="space-y-4">
+                      <label className="flex items-center space-x-2">
+                        <input type="checkbox" checked={notifyConfig.smtp.enabled} onChange={e => setNotifyConfig({...notifyConfig, smtp: {...notifyConfig.smtp, enabled: e.target.checked}})} className="rounded text-blue-600 focus:ring-blue-500" />
+                        <span className="text-sm font-medium text-gray-700">启用邮件发送</span>
+                      </label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">SMTP 服务器 (Host)</label>
+                            <input type="text" placeholder="smtp.exmail.qq.com" className="w-full border rounded p-2 text-sm" value={notifyConfig.smtp.host} onChange={e => setNotifyConfig({...notifyConfig, smtp: {...notifyConfig.smtp, host: e.target.value}})} />
+                         </div>
+                         <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">端口 (Port)</label>
+                            <input type="number" placeholder="465" className="w-full border rounded p-2 text-sm" value={notifyConfig.smtp.port} onChange={e => setNotifyConfig({...notifyConfig, smtp: {...notifyConfig.smtp, port: Number(e.target.value)}})} />
+                         </div>
+                         <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">发送账号 (User/Email)</label>
+                            <input type="text" placeholder="notify@company.com" className="w-full border rounded p-2 text-sm" value={notifyConfig.smtp.user} onChange={e => setNotifyConfig({...notifyConfig, smtp: {...notifyConfig.smtp, user: e.target.value}})} />
+                         </div>
+                         <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">授权码/密码 (Password)</label>
+                            <input type="password" className="w-full border rounded p-2 text-sm" value={notifyConfig.smtp.pass} onChange={e => setNotifyConfig({...notifyConfig, smtp: {...notifyConfig.smtp, pass: e.target.value}})} />
+                         </div>
+                      </div>
+                   </div>
+                </div>
+
+                {/* Robot Config */}
+                <div className="bg-white border border-gray-200 rounded-lg p-6">
+                   <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center border-b pb-2">
+                     <MessageSquare className="w-5 h-5 mr-2 text-green-600" /> IM 机器人集成 (Webhooks)
+                   </h3>
+                   <div className="space-y-6">
+                      {/* WeCom */}
+                      <div className="flex flex-col space-y-2">
+                         <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold text-gray-700">企业微信 (WeCom)</span>
+                            <label className="flex items-center space-x-2">
+                               <input type="checkbox" checked={notifyConfig.robots.wecom.enabled} onChange={e => setNotifyConfig({...notifyConfig, robots: {...notifyConfig.robots, wecom: {...notifyConfig.robots.wecom, enabled: e.target.checked}}})} className="rounded text-green-600" />
+                               <span className="text-xs text-gray-500">启用</span>
+                            </label>
+                         </div>
+                         <input type="text" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..." className="w-full border rounded p-2 text-sm" value={notifyConfig.robots.wecom.webhook} onChange={e => setNotifyConfig({...notifyConfig, robots: {...notifyConfig.robots, wecom: {...notifyConfig.robots.wecom, webhook: e.target.value}}})} />
+                      </div>
+                      
+                      {/* DingTalk */}
+                      <div className="flex flex-col space-y-2">
+                         <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold text-gray-700">钉钉 (DingTalk)</span>
+                            <label className="flex items-center space-x-2">
+                               <input type="checkbox" checked={notifyConfig.robots.dingtalk.enabled} onChange={e => setNotifyConfig({...notifyConfig, robots: {...notifyConfig.robots, dingtalk: {...notifyConfig.robots.dingtalk, enabled: e.target.checked}}})} className="rounded text-blue-500" />
+                               <span className="text-xs text-gray-500">启用</span>
+                            </label>
+                         </div>
+                         <input type="text" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." className="w-full border rounded p-2 text-sm" value={notifyConfig.robots.dingtalk.webhook} onChange={e => setNotifyConfig({...notifyConfig, robots: {...notifyConfig.robots, dingtalk: {...notifyConfig.robots.dingtalk, webhook: e.target.value}}})} />
+                      </div>
+
+                      {/* Feishu */}
+                      <div className="flex flex-col space-y-2">
+                         <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold text-gray-700">飞书 (Feishu/Lark)</span>
+                            <label className="flex items-center space-x-2">
+                               <input type="checkbox" checked={notifyConfig.robots.feishu.enabled} onChange={e => setNotifyConfig({...notifyConfig, robots: {...notifyConfig.robots, feishu: {...notifyConfig.robots.feishu, enabled: e.target.checked}}})} className="rounded text-blue-400" />
+                               <span className="text-xs text-gray-500">启用</span>
+                            </label>
+                         </div>
+                         <input type="text" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." className="w-full border rounded p-2 text-sm" value={notifyConfig.robots.feishu.webhook} onChange={e => setNotifyConfig({...notifyConfig, robots: {...notifyConfig.robots, feishu: {...notifyConfig.robots.feishu, webhook: e.target.value}}})} />
+                      </div>
+                   </div>
+                </div>
+
+                <div className="flex justify-end pt-4">
+                   <button 
+                     onClick={() => handleSave('slss_notification_config', notifyConfig, '通知配置已保存')}
+                     className={`${themeConfig.classes.bg} text-white px-6 py-2 rounded shadow ${themeConfig.classes.bgHover} flex items-center`}
+                   >
+                     <Save className="w-4 h-4 mr-2" /> 保存通知配置
+                   </button>
+                </div>
               </div>
             )}
 
@@ -448,8 +602,7 @@ const AdminPanel: React.FC = () => {
                   </h3>
                   
                   <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm space-y-6">
-                     
-                     {/* Provider Selection */}
+                     {/* Provider Selection (Same as before) */}
                      <div>
                        <label className="block text-sm font-bold text-gray-700 mb-2">选择接入渠道 (Provider)</label>
                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -471,80 +624,40 @@ const AdminPanel: React.FC = () => {
                            );
                          })}
                        </div>
-                       <p className="mt-2 text-xs text-gray-500 bg-gray-50 p-2 rounded border border-gray-100">
-                         <span className="font-bold">说明:</span> {PROVIDER_PRESETS[aiConfig.provider]?.desc}
-                       </p>
                      </div>
-
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Base URL */}
                         <div className="md:col-span-2">
-                           <label className="block text-sm font-medium text-gray-700 flex items-center mb-1">
-                             <Globe className="w-4 h-4 mr-1 text-gray-400" /> 接口地址 (Base URL)
-                           </label>
+                           <label className="block text-sm font-medium text-gray-700 mb-1">接口地址 (Base URL)</label>
                            <input
                              type="text"
-                             className="block w-full rounded-md border-gray-300 border p-2.5 shadow-sm focus:ring-purple-500 focus:border-purple-500 text-sm font-mono"
-                             placeholder={aiConfig.provider === 'google' ? '默认空 (官方)。如使用代理请输入...' : 'https://api.openai.com/v1'}
+                             className="block w-full rounded-md border-gray-300 border p-2 text-sm font-mono"
+                             placeholder={aiConfig.provider === 'google' ? '默认空 (官方)' : 'https://api.openai.com/v1'}
                              value={aiConfig.baseUrl}
                              onChange={(e) => setAiConfig({...aiConfig, baseUrl: e.target.value})}
                            />
-                           <p className="mt-1 text-xs text-gray-500">
-                             {aiConfig.provider === 'google' 
-                               ? '留空则使用 Google 官方 SDK (需魔法)。若使用 NEW API 中转，请填入中转地址 (如 https://api.xyhelper.cn/v1)。' 
-                               : '通常以 /v1 结尾。系统会自动处理 /chat/completions 后缀。'}
-                           </p>
                          </div>
-
-                         {/* API Key */}
                          <div className="md:col-span-2">
-                           <label className="block text-sm font-medium text-gray-700 flex items-center mb-1">
-                             <Key className="w-4 h-4 mr-1 text-gray-400" /> API 密钥 (Key)
-                           </label>
-                           <div className="relative">
-                             <input
-                               type="password"
-                               className="block w-full rounded-md border-gray-300 border p-2.5 shadow-sm focus:ring-purple-500 focus:border-purple-500 text-sm font-mono"
-                               placeholder={aiConfig.provider === 'google' ? 'AIzaSy...' : 'sk-...'}
-                               value={aiConfig.apiKey}
-                               onChange={(e) => setAiConfig({...aiConfig, apiKey: e.target.value})}
-                             />
-                             <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                               <Lock className="h-4 w-4 text-gray-400" />
-                             </div>
-                           </div>
+                           <label className="block text-sm font-medium text-gray-700 mb-1">API 密钥 (Key)</label>
+                           <input
+                             type="password"
+                             className="block w-full rounded-md border-gray-300 border p-2 text-sm font-mono"
+                             value={aiConfig.apiKey}
+                             onChange={(e) => setAiConfig({...aiConfig, apiKey: e.target.value})}
+                           />
                          </div>
-
-                         {/* Model Name */}
                          <div className="md:col-span-2">
-                           <label className="block text-sm font-medium text-gray-700 flex items-center mb-1">
-                             <Cpu className="w-4 h-4 mr-1 text-gray-400" /> 模型名称 (Model Name)
-                           </label>
+                           <label className="block text-sm font-medium text-gray-700 mb-1">模型名称 (Model)</label>
                            <input 
                              type="text" 
-                             className="block w-full rounded-md border-gray-300 border p-2.5 shadow-sm focus:ring-purple-500 focus:border-purple-500 text-sm"
+                             className="block w-full rounded-md border-gray-300 border p-2 text-sm"
                              value={aiConfig.model}
                              onChange={(e) => setAiConfig({...aiConfig, model: e.target.value})}
-                             placeholder="例如: gpt-4o, gemini-pro, deepseek-chat"
                            />
                          </div>
                       </div>
-                      
                       <div className="pt-4 flex items-center justify-end border-t border-gray-100 space-x-3">
-                        <button 
-                          onClick={handleTestAI}
-                          disabled={isTestLoading}
-                          className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded shadow-sm hover:bg-gray-50 flex items-center disabled:opacity-50"
-                        >
-                          {isTestLoading ? <RefreshCw className="w-4 h-4 mr-2 animate-spin"/> : <Network className="w-4 h-4 mr-2" />} 
-                          测试连接
-                        </button>
-                        <button 
-                          onClick={() => handleSave('slss_ai_config', aiConfig, 'AI 渠道配置已保存')}
-                          className="bg-purple-600 text-white px-6 py-2 rounded shadow hover:bg-purple-700 flex items-center"
-                        >
-                          <Save className="w-4 h-4 mr-2" /> 保存配置
-                        </button>
+                        <button onClick={handleTestAI} className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-50">测试连接</button>
+                        <button onClick={() => handleSave('slss_ai_config', aiConfig, '配置已保存')} className="bg-purple-600 text-white px-6 py-2 rounded text-sm hover:bg-purple-700">保存配置</button>
                       </div>
                   </div>
                 </div>
@@ -553,55 +666,106 @@ const AdminPanel: React.FC = () => {
 
             {/* --- TAB: USERS --- */}
             {activeTab === 'users' && (
-              <div className="animate-in fade-in">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-medium text-gray-900">用户权限矩阵</h3>
-                  <button className={`text-sm ${themeConfig.classes.text} hover:underline ${themeConfig.classes.bgLight} px-3 py-1 rounded`}>
-                    + 新增用户 (模拟)
-                  </button>
-                </div>
+              <div className="animate-in fade-in space-y-8">
                 
-                <div className="overflow-x-auto border border-gray-200 rounded-lg">
-                  <table className="min-w-full divide-y divide-gray-200">
-                     <thead className="bg-gray-50">
-                       <tr>
-                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32 sticky left-0 bg-gray-50 z-10">用户</th>
-                         {/* Render all permission headers */}
-                         {Object.entries(PERMISSION_LABELS).map(([key, label]) => (
-                           <th key={key} className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase whitespace-nowrap min-w-[100px]">{label}</th>
-                         ))}
-                         <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">状态</th>
-                       </tr>
-                     </thead>
-                     <tbody className="bg-white divide-y divide-gray-200">
-                       {users.map(u => (
-                         <tr key={u.id} className="hover:bg-gray-50">
-                           <td className="px-4 py-4 text-sm font-medium text-gray-900 sticky left-0 bg-white hover:bg-gray-50 z-10 border-r border-gray-100 shadow-sm">
-                             {u.username}
-                             <div className="text-xs text-gray-400 font-normal">{ROLE_LABELS[u.role]}</div>
-                           </td>
-                           
-                           {/* Permission Checkboxes */}
-                           {Object.keys(PERMISSION_LABELS).map((permKey) => (
-                             <td key={permKey} className="px-2 py-4 text-center">
-                               <input 
-                                 type="checkbox"
-                                 className={`h-4 w-4 ${themeConfig.classes.text} focus:ring-blue-500 border-gray-300 rounded cursor-pointer`}
-                                 checked={u.permissions.includes(permKey as Permission)}
-                                 onChange={() => togglePermission(u.id, permKey as Permission)}
-                               />
-                             </td>
-                           ))}
+                {/* Pending Approval Section */}
+                {pendingUsers.length > 0 && (
+                   <div className="bg-orange-50 border border-orange-200 rounded-lg p-6">
+                      <h3 className="text-lg font-bold text-orange-800 mb-4 flex items-center">
+                         <AlertCircle className="w-5 h-5 mr-2" /> 待审批用户 (Pending Registration)
+                      </h3>
+                      <div className="overflow-x-auto bg-white rounded-lg border border-orange-100">
+                        <table className="min-w-full divide-y divide-gray-200">
+                           <thead className="bg-orange-100/50">
+                              <tr>
+                                 <th className="px-6 py-3 text-left text-xs font-medium text-orange-900 uppercase">申请用户</th>
+                                 <th className="px-6 py-3 text-left text-xs font-medium text-orange-900 uppercase">申请角色</th>
+                                 <th className="px-6 py-3 text-left text-xs font-medium text-orange-900 uppercase">联系方式</th>
+                                 <th className="px-6 py-3 text-right text-xs font-medium text-orange-900 uppercase">操作</th>
+                              </tr>
+                           </thead>
+                           <tbody className="divide-y divide-gray-200">
+                              {pendingUsers.map(u => (
+                                 <tr key={u.id}>
+                                    <td className="px-6 py-4 text-sm font-medium text-gray-900">{u.username}</td>
+                                    <td className="px-6 py-4 text-sm text-gray-500">{ROLE_LABELS[u.role]}</td>
+                                    <td className="px-6 py-4 text-sm text-gray-500">{u.phone || '-'}</td>
+                                    <td className="px-6 py-4 text-right space-x-2">
+                                       <button 
+                                          onClick={() => updateUserStatus(u.id, 'active')}
+                                          className="text-green-600 hover:text-green-900 text-sm font-bold bg-green-50 px-3 py-1 rounded"
+                                       >
+                                          通过
+                                       </button>
+                                       <button 
+                                          onClick={() => deleteUser(u.id)}
+                                          className="text-red-600 hover:text-red-900 text-sm bg-red-50 px-3 py-1 rounded"
+                                       >
+                                          拒绝
+                                       </button>
+                                    </td>
+                                 </tr>
+                              ))}
+                           </tbody>
+                        </table>
+                      </div>
+                   </div>
+                )}
 
-                           <td className="px-4 py-4 text-center text-sm">
-                              <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${u.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                {u.status === 'active' ? '正常' : '禁用'}
-                              </span>
-                           </td>
+                {/* Active Users Section */}
+                <div>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-medium text-gray-900">现有用户管理 (Active Users)</h3>
+                    <button 
+                       onClick={() => setShowAddUserModal(true)}
+                       className={`flex items-center text-sm text-white ${themeConfig.classes.bg} ${themeConfig.classes.bgHover} px-4 py-2 rounded shadow-sm`}
+                    >
+                      <UserPlus className="w-4 h-4 mr-2"/> 新增用户
+                    </button>
+                  </div>
+                  
+                  <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                    <table className="min-w-full divide-y divide-gray-200">
+                       <thead className="bg-gray-50">
+                         <tr>
+                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">用户</th>
+                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">角色</th>
+                           <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">状态</th>
+                           <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">操作</th>
                          </tr>
-                       ))}
-                     </tbody>
-                  </table>
+                       </thead>
+                       <tbody className="bg-white divide-y divide-gray-200">
+                         {activeUsers.map(u => (
+                           <tr key={u.id} className="hover:bg-gray-50">
+                             <td className="px-4 py-4 text-sm font-medium text-gray-900">
+                               {u.username}
+                             </td>
+                             <td className="px-4 py-4 text-sm text-gray-500">
+                               <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800`}>
+                                 {ROLE_LABELS[u.role]}
+                               </span>
+                             </td>
+                             <td className="px-4 py-4 text-center text-sm">
+                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                                  正常
+                                </span>
+                             </td>
+                             <td className="px-4 py-4 text-right text-sm">
+                                {u.username !== 'stars' && (
+                                   <button 
+                                      onClick={() => deleteUser(u.id)}
+                                      className="text-red-500 hover:text-red-700"
+                                      title="删除用户"
+                                   >
+                                      <Trash2 className="w-4 h-4" />
+                                   </button>
+                                )}
+                             </td>
+                           </tr>
+                         ))}
+                       </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -629,6 +793,27 @@ const AdminPanel: React.FC = () => {
                     </div>
                   </div>
 
+                  <div className="bg-white border border-gray-200 p-6 rounded-md shadow-sm">
+                    <h4 className="text-sm font-bold text-gray-800 flex items-center mb-4">
+                      <Settings className="w-4 h-4 mr-2"/> 业务流转设置
+                    </h4>
+                    
+                    <div className="mb-4">
+                       <label className="block text-sm font-medium text-gray-700 mb-1">工单默认处理人 (Default Assignee)</label>
+                       <p className="text-xs text-gray-500 mb-2">新建工单将自动指派给该用户。若未设置，则需手动领取。</p>
+                       <select 
+                         className="w-full md:w-1/2 border border-gray-300 rounded-md p-2 text-sm"
+                         value={sysSettings.defaultAssigneeId || ''}
+                         onChange={e => setSysSettings({...sysSettings, defaultAssigneeId: e.target.value ? Number(e.target.value) : undefined})}
+                       >
+                         <option value="">-- 不指定 / 暂存池 --</option>
+                         {activeUsers.map(u => (
+                            <option key={u.id} value={u.id}>{u.username} ({ROLE_LABELS[u.role]})</option>
+                         ))}
+                       </select>
+                    </div>
+                  </div>
+
                   <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-md">
                     <h4 className="text-sm font-bold text-yellow-800 flex items-center">
                       <AlertCircle className="w-4 h-4 mr-2"/> 维护模式
@@ -636,25 +821,17 @@ const AdminPanel: React.FC = () => {
                     <p className="text-xs text-yellow-700 mt-1">启用维护模式后，除管理员外，其他用户将无法登录系统。</p>
                     <div className="mt-3">
                       <label className="flex items-center space-x-3">
-                        <input type="checkbox" className="h-4 w-4 text-yellow-600 border-gray-300 rounded"/>
+                        <input type="checkbox" checked={sysSettings.maintenanceMode} onChange={e => setSysSettings({...sysSettings, maintenanceMode: e.target.checked})} className="h-4 w-4 text-yellow-600 border-gray-300 rounded"/>
                         <span className="text-sm font-medium text-gray-700">启用系统维护模式</span>
                       </label>
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">系统名称</label>
-                      <input type="text" defaultValue="SLSS - 服务器全生命周期服务系统" className="mt-1 block w-full border border-gray-300 rounded p-2 text-sm"/>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">日志保留天数</label>
-                      <input type="number" defaultValue="90" className="mt-1 block w-full border border-gray-300 rounded p-2 text-sm"/>
-                    </div>
-                  </div>
                   
                   <div className="pt-4 border-t border-gray-200">
-                    <button className="bg-gray-800 text-white px-4 py-2 rounded text-sm hover:bg-gray-900">
+                    <button 
+                       onClick={() => handleSave('slss_system_settings', sysSettings, '基础设置已保存')}
+                       className="bg-gray-800 text-white px-4 py-2 rounded text-sm hover:bg-gray-900"
+                    >
                        保存基础设置
                     </button>
                   </div>
@@ -664,6 +841,52 @@ const AdminPanel: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Add User Modal */}
+      {showAddUserModal && (
+         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+               <h3 className="text-lg font-bold mb-4">新增用户</h3>
+               <div className="space-y-4">
+                  <div>
+                     <label className="block text-sm font-medium text-gray-700">用户名</label>
+                     <input 
+                        type="text" 
+                        className="mt-1 block w-full border border-gray-300 rounded-md p-2"
+                        value={newUserForm.username}
+                        onChange={e => setNewUserForm({...newUserForm, username: e.target.value})}
+                     />
+                  </div>
+                  <div>
+                     <label className="block text-sm font-medium text-gray-700">密码</label>
+                     <input 
+                        type="text" 
+                        className="mt-1 block w-full border border-gray-300 rounded-md p-2"
+                        value={newUserForm.password}
+                        onChange={e => setNewUserForm({...newUserForm, password: e.target.value})}
+                     />
+                  </div>
+                  <div>
+                     <label className="block text-sm font-medium text-gray-700">角色</label>
+                     <select 
+                        className="mt-1 block w-full border border-gray-300 rounded-md p-2"
+                        value={newUserForm.role}
+                        onChange={e => setNewUserForm({...newUserForm, role: e.target.value as UserRole})}
+                     >
+                        <option value={UserRole.TECHNICIAN}>技术工程师</option>
+                        <option value={UserRole.MANAGER}>服务经理</option>
+                        <option value={UserRole.PRODUCTION}>生产专员</option>
+                        <option value={UserRole.ADMIN}>管理员</option>
+                     </select>
+                  </div>
+               </div>
+               <div className="mt-6 flex justify-end space-x-3">
+                  <button onClick={() => setShowAddUserModal(false)} className="px-4 py-2 border rounded text-gray-600 hover:bg-gray-50">取消</button>
+                  <button onClick={handleAddUser} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">创建</button>
+               </div>
+            </div>
+         </div>
+      )}
     </div>
   );
 };

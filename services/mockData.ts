@@ -1,51 +1,15 @@
 
-
 import { User, UserRole, OrderStatus, RepairOrder, Asset, LifecycleEvent, TestReport, LogisticsRecord, DiscoveryPhase } from "../types";
 
 export const MOCK_USERS: User[] = [
   { 
     id: 1, 
-    username: 'admin', 
-    password: 'admin123', 
+    username: 'stars', 
+    password: 'Gyh@20210625', 
     role: UserRole.ADMIN, 
     status: 'active',
     permissions: ['VIEW_DASHBOARD', 'VIEW_ORDERS', 'MANAGE_ORDERS', 'VIEW_PRODUCTION', 'MANAGE_PRODUCTION', 'MANAGE_SYSTEM']
-  },
-  { 
-    id: 2, 
-    username: '高云晖 (Manager)', 
-    password: '123456', 
-    role: UserRole.MANAGER, 
-    status: 'active', 
-    phone: '13800000001',
-    permissions: ['VIEW_DASHBOARD', 'VIEW_ORDERS', 'MANAGE_ORDERS', 'VIEW_PRODUCTION']
-  },
-  { 
-    id: 3, 
-    username: '童振宇 (Tech)', 
-    password: '123456', 
-    role: UserRole.TECHNICIAN, 
-    status: 'active', 
-    phone: '13800000002',
-    permissions: ['VIEW_DASHBOARD', 'VIEW_ORDERS', 'MANAGE_ORDERS']
-  },
-  { 
-    id: 4, 
-    username: '李瑞谦 (Tech)', 
-    password: '123456', 
-    role: UserRole.TECHNICIAN, 
-    status: 'active', 
-    phone: '13800000003',
-    permissions: ['VIEW_DASHBOARD', 'VIEW_ORDERS', 'MANAGE_ORDERS']
-  },
-  { 
-    id: 5, 
-    username: '生产专员01', 
-    password: '123456', 
-    role: UserRole.PRODUCTION, 
-    status: 'active',
-    permissions: ['VIEW_DASHBOARD', 'VIEW_PRODUCTION', 'MANAGE_PRODUCTION']
-  },
+  }
 ];
 
 export const MOCK_ASSETS: Asset[] = [
@@ -120,7 +84,7 @@ export const MOCK_ORDERS: RepairOrder[] = [
     fault_description: '服务器随机内核崩溃 (Kernel Panic)。客户报告在高负载下系统不稳定。',
     discovery_phase: DiscoveryPhase.IN_USE,
     status: OrderStatus.CHECKING,
-    assigned_to: 3,
+    assigned_to: 1, // assigned to admin/stars
     shipment_model: '551C FKF',
     shipment_date: '2023-01-15',
     shipment_config_json: MOCK_ASSETS[0].factory_config_json,
@@ -136,7 +100,7 @@ export const MOCK_ORDERS: RepairOrder[] = [
     fault_description: '开机无显示，风扇狂转。已更换内存无效。',
     discovery_phase: DiscoveryPhase.IN_USE,
     status: OrderStatus.CHECKING, // Still open
-    assigned_to: 4,
+    assigned_to: 1,
     created_at: '2023-09-01T09:00:00Z', // > 30 Days ago
     updated_at: '2023-09-05T10:00:00Z'
   },
@@ -149,7 +113,7 @@ export const MOCK_ORDERS: RepairOrder[] = [
     fault_description: '主板再次故障，PCIE 无法识别。',
     discovery_phase: DiscoveryPhase.IN_USE,
     status: OrderStatus.ASSIGNED,
-    assigned_to: 3,
+    assigned_to: 1,
     created_at: '2023-10-27T09:00:00Z',
     updated_at: '2023-10-27T09:00:00Z'
   },

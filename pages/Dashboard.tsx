@@ -149,8 +149,8 @@ const Dashboard: React.FC = () => {
     try {
       const result = await analyzeFault(prompt, "System Dashboard Data");
       setAiAnalysis(result.recommendation || result.summary); 
-    } catch (e) {
-      setAiAnalysis("AI 服务暂时不可用，请检查网络或 API Key 设置。");
+    } catch (e: any) {
+      setAiAnalysis(e.message || "AI 服务不可用，请在【系统管理】中配置 API Key。");
     } finally {
       setAnalyzing(false);
     }

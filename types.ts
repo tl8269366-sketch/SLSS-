@@ -178,10 +178,33 @@ export interface AIConfig {
   apiKey: string;
 }
 
+export interface SMTPConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  fromName: string;
+  fromEmail: string;
+}
+
+export interface RobotConfig {
+  wecom: { enabled: boolean; webhook: string; };
+  dingtalk: { enabled: boolean; webhook: string; secret?: string; };
+  feishu: { enabled: boolean; webhook: string; };
+}
+
+export interface NotificationConfig {
+  smtp: SMTPConfig;
+  robots: RobotConfig;
+}
+
 export interface SystemSettings {
   appName: string;
   maintenanceMode: boolean;
   logRetentionDays: number;
+  defaultAssigneeId?: number; // New field for default order assignee
 }
 
 export interface SystemStatus {
