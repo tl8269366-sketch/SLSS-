@@ -338,7 +338,7 @@ const Dashboard: React.FC = () => {
             {/* Overdue List */}
             <div className="p-6">
                <h4 className="text-sm font-bold text-gray-700 uppercase mb-4 flex items-center">
-                  <Clock className="w-4 h-4 mr-2 text-red-500"/> 严重滞留工单 (>30天)
+                  <Clock className="w-4 h-4 mr-2 text-red-500"/> 严重滞留工单 (&gt;30天)
                </h4>
                {overdueOrders.length > 0 ? (
                   <ul className="space-y-3">

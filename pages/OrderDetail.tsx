@@ -749,7 +749,7 @@ const OrderDetail: React.FC = () => {
                  onClick={() => updateStatus(OrderStatus.QA_AGING, '已进入老化测试阶段')}
                  className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded shadow hover:bg-indigo-700 text-sm font-medium"
                >
-                  <Play className="w-4 h-4 mr-2" /> 维修完成 -> 开始老化 (QA)
+                  <Play className="w-4 h-4 mr-2" /> 维修完成 -&gt; 开始老化 (QA)
                </button>
             )}
 
@@ -792,7 +792,7 @@ const OrderDetail: React.FC = () => {
                  onClick={() => updateStatus(OrderStatus.CLOSED, '工单已关闭')}
                  className="flex items-center px-4 py-2 bg-gray-800 text-white rounded shadow hover:bg-gray-900 text-sm font-medium"
                >
-                  <CheckCircle className="w-4 h-4 mr-2" /> 确认签收 -> 结单 (Close)
+                  <CheckCircle className="w-4 h-4 mr-2" /> 确认签收 -&gt; 结单 (Close)
                </button>
                </>
             )}
