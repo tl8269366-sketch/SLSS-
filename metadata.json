@@ -1,0 +1,8 @@
+{
+  "name": "Server Lifecycle Service System",
+  "description": "A comprehensive system for server production tracking, lifecycle management, after-sales service workflows, and customer transparency portals.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
