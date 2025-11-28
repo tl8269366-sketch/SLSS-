@@ -1,3 +1,4 @@
+
 # SLSS 系统部署指南
 
 本文档详细说明如何将 SLSS (Server Lifecycle Service System) 部署到 Linux 生产环境，并推送到 GitHub。
@@ -30,87 +31,84 @@ sudo npm install -g pm2
 2. 创建数据库和用户:
    ```sql
    -- 创建数据库
-   CREATE DATABASE slss_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   CREATE DATABASE IF NOT EXISTS slss_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
    
    -- 创建用户 (请修改 'your_password' 为强密码)
-   CREATE USER 'slss_user'@'localhost' IDENTIFIED BY 'your_password';
+   -- 1. 创建本地 Socket 连接用户
+   CREATE USER IF NOT EXISTS 'slss_user'@'localhost' IDENTIFIED BY 'your_password';
+   -- 2. 创建本地 TCP/IP 连接用户 (关键步骤: 解决 Node.js 127.0.0.1 连接问题)
+   CREATE USER IF NOT EXISTS 'slss_user'@'127.0.0.1' IDENTIFIED BY 'your_password';
    
    -- 授权
    GRANT ALL PRIVILEGES ON slss_db.* TO 'slss_user'@'localhost';
+   GRANT ALL PRIVILEGES ON slss_db.* TO 'slss_user'@'127.0.0.1';
    FLUSH PRIVILEGES;
    EXIT;
    ```
 
 ## 3. 项目部署
 
-### A. 获取代码
+### A. 准备项目文件
 
-如果是推送到 GitHub 开源，首先在 GitHub 创建仓库，然后本地推送：
+上传或 `git clone` 代码到服务器。
+
+### B. 清理干扰配置 (重要!)
+
+在生产环境中，请**务必删除** `.env.local` 文件（如果存在）。该文件通常用于开发环境覆盖，如果不删除，可能会导致您的 `.env` 配置（如数据库 IP）不生效。
 
 ```bash
-# 本地初始化 (开发机)
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
-git push -u origin main
+# 删除本地覆盖配置，避免冲突
+rm -f .env.local
 ```
 
-然后在服务器拉取：
-```bash
-# 服务器端
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
-cd YOUR_REPO
-```
+### C. 配置环境变量
 
-### B. 安装依赖与构建
+复制模板并编辑配置：
 
 ```bash
-# 安装依赖
-npm install
-
-# 构建前端 (生成 dist 目录)
-npm run build
-```
-
-### C. 导入数据库结构
-
-使用项目提供的 `db/schema.sql` 初始化表结构：
-
-```bash
-mysql -u slss_user -p slss_db < db/schema.sql
-```
-
-### D. 配置环境变量
-
-在项目根目录创建 `.env` 文件：
-
-```bash
+cp .env.example .env
 nano .env
 ```
 
-内容如下：
+**⚠️ 关键提示：** 请仔细填写 `.env` 中的数据库信息。**不要**将注释（如 `# 建议...`）复制到等号后面，这会导致连接失败！
+
+**✅ 正确示例：**
 ```env
-PORT=3000
-DB_HOST=localhost
-DB_USER=slss_user
-DB_PASSWORD=your_password
-DB_NAME=slss_db
-API_KEY=your_google_gemini_api_key
+DB_HOST=127.0.0.1
+DB_PORT=32121
 ```
 
-### E. 启动服务
+**❌ 错误示例 (会导致连接失败)：**
+```env
+DB_HOST=127.0.0.1 # 这里的注释会被当做 IP 的一部分
+```
 
-使用 PM2 启动 Node.js 后端。由于我们在 `server.ts` 中配置了静态文件托管，启动后端即可同时服务前端页面。
+### D. 安装依赖与构建
 
 ```bash
-# 启动方式 1: 直接运行 TS (开发/轻量级)
-pm2 start "npm run serve" --name "slss-app"
+# 1. 安装项目依赖
+npm install
 
-# 启动方式 2: 编译后运行 (推荐生产)
-# 需先运行: npx tsc (生成 dist/server.js)
-# pm2 start dist/server.js --name "slss-app"
+# 2. 构建前端 (生成 dist 目录)
+npm run build
+```
+
+### E. 导入数据库结构
+
+使用项目自带的初始化脚本 `db/init.js` 自动创建数据库和表结构：
+
+```bash
+node db/init.js
+```
+*如果显示 `✅ Database schema applied successfully`，说明连接和导入均成功。*
+
+### F. 启动服务
+
+使用 PM2 后台启动：
+
+```bash
+# 需先运行 build，然后：
+pm2 start dist/server.js --name "slss-app"
 
 # 保存 PM2 列表以便开机自启
 pm2 save
@@ -119,41 +117,13 @@ pm2 startup
 
 访问 `http://your_server_ip:3000` 即可看到应用。
 
-## 4. Nginx 反向代理 (推荐)
+## 4. 常见问题排查
 
-为了通过域名访问并使用 80/443 端口，建议配置 Nginx。
-
-```bash
-sudo apt install -y nginx
-```
-
-创建配置 `/etc/nginx/sites-available/slss`:
-
-```nginx
-server {
-    listen 80;
-    server_name your_domain.com;
-
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-```
-
-激活配置:
-```bash
-sudo ln -s /etc/nginx/sites-available/slss /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
-```
-
-## 5. 常见问题
-
-*   **前端刷新 404**: `server.ts` 中已配置 `app.get('*')` 指向 `index.html`，确保 `dist` 目录存在且路径正确。
-*   **数据库连接失败**: 检查 `.env` 中的密码和 MySQL 用户权限。
-*   **API 报错**: 查看 PM2 日志 `pm2 logs slss-app`。
+*   **Error: connect ECONNREFUSED 127.0.0.1:3306**:
+    *   检查 MySQL 是否启动: `sudo systemctl status mysql`
+    *   检查端口是否被防火墙拦截。
+    *   确保 `.env` 中的 `DB_PORT` 与实际 MySQL 端口一致。
+*   **Error: Access denied for user 'slss_user'@'127.0.0.1'**:
+    *   请重新执行“第2步：数据库配置”中的 `CREATE USER ... @'127.0.0.1'` 语句。
+*   **依赖安装报错**:
+    *   如果提示找不到包，尝试运行 `npm install --legacy-peer-deps`。

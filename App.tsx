@@ -8,25 +8,25 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import ServiceOrders from './pages/ServiceOrders';
 import OrderDetail from './pages/OrderDetail';
-import ProductionImport from './pages/ProductionImport';
-import ProductionList from './pages/ProductionList';
+import ProductionEntry from './pages/ProductionImport'; 
+import ProductionQuery from './pages/ProductionList';   
+import ProductionRepair from './pages/ProductionRepair';
+import ProcessDesigner from './pages/ProcessDesigner'; 
+import DynamicProcessList from './pages/DynamicProcessList'; // New Page
 import Portal from './pages/Portal';
 import AdminPanel from './pages/AdminPanel';
 import { Permission } from './types';
 
-// Updated to check permissions instead of roles
-const ProtectedRoute: React.FC<{ children: React.ReactNode; requiredPermission?: Permission }> = ({ children, requiredPermission }) => {
+const ProtectedRoute: React.FC<{ children: React.ReactNode; requiredPermission?: Permission; requiredPermissions?: Permission[] }> = ({ children, requiredPermission, requiredPermissions }) => {
   const { user, loading } = useAuth();
-  
   if (loading) return <div>Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
-  
-  // If specific permission is required, check it
   if (requiredPermission && !user.permissions.includes(requiredPermission)) {
-    // If user has no access, redirect to dashboard or show unauthorized
     return <Navigate to="/dashboard" replace />;
   }
-  
+  if (requiredPermissions && !requiredPermissions.some(p => user.permissions.includes(p))) {
+    return <Navigate to="/dashboard" replace />;
+  }
   return <Layout>{children}</Layout>;
 };
 
@@ -35,7 +35,6 @@ const AppContent = () => {
     <Routes>
       <Route path="/portal" element={<Portal />} />
       <Route path="/login" element={<Login />} />
-      
       <Route path="/" element={<Navigate to="/dashboard" />} />
       
       <Route path="/dashboard" element={
@@ -56,22 +55,39 @@ const AppContent = () => {
         </ProtectedRoute>
       } />
 
-      {/* New Route for Viewing Production Data */}
-      <Route path="/production/list" element={
-        <ProtectedRoute requiredPermission="VIEW_PRODUCTION">
-          <ProductionList />
+      {/* Dynamic Process Routes */}
+      <Route path="/process/:module/:templateId" element={
+        <ProtectedRoute requiredPermission="VIEW_ORDERS">
+           <DynamicProcessList />
         </ProtectedRoute>
       } />
 
-      {/* Existing Route for Entry */}
+      <Route path="/production/list" element={
+        <ProtectedRoute requiredPermission="PROD_QUERY">
+          <ProductionQuery />
+        </ProtectedRoute>
+      } />
+
       <Route path="/production/entry" element={
-        <ProtectedRoute requiredPermission="MANAGE_PRODUCTION">
-          <ProductionImport />
+        <ProtectedRoute requiredPermissions={['PROD_ENTRY_ASSEMBLY', 'PROD_ENTRY_INSPECT_INIT', 'PROD_ENTRY_AGING', 'PROD_ENTRY_INSPECT_FINAL']}>
+          <ProductionEntry />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/production/repair" element={
+        <ProtectedRoute requiredPermission="PROD_REPAIR">
+          <ProductionRepair />
         </ProtectedRoute>
       } />
       
-      {/* Legacy redirect for old bookmarks */}
       <Route path="/production" element={<Navigate to="/production/entry" />} />
+
+      {/* Process Designer Route */}
+      <Route path="/process-designer" element={
+        <ProtectedRoute requiredPermission="MANAGE_SYSTEM">
+          <ProcessDesigner />
+        </ProtectedRoute>
+      } />
 
       <Route path="/admin" element={
         <ProtectedRoute requiredPermission="MANAGE_SYSTEM">

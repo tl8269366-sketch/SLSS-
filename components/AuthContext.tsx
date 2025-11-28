@@ -1,6 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole, Permission } from '../types';
+import { MOCK_MODE } from '../constants';
 import { MOCK_USERS } from '../services/mockData';
 
 interface RegisterData {
@@ -13,7 +14,7 @@ interface RegisterData {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  usersList: User[]; // All users in the system (mock db)
+  usersList: User[];
   login: (username: string, password?: string) => Promise<{success: boolean; message?: string}>;
   logout: () => void;
   register: (data: RegisterData) => Promise<{success: boolean; message?: string}>;
@@ -30,100 +31,119 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [usersList, setUsersList] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Initialize Users Database (Mock Persistence)
+  // Initialize Auth State
   useEffect(() => {
-    const savedUsers = localStorage.getItem('slss_users_db');
-    let initialUsers = [...MOCK_USERS]; // Default to fresh mock data
-
-    if (savedUsers) {
-      try {
-        const parsed = JSON.parse(savedUsers);
-        // Merge strategy: Keep existing users, but FORCE update default admin (ID 1) 
-        // from code to ensure credentials match what the developer expects.
-        // This fixes "Login Error" when local storage has stale admin data.
-        
-        // 1. Filter out old admin from saved data
-        const others = parsed.filter((u: User) => u.username !== 'stars');
-        
-        // 2. Get fresh admin from MOCK_USERS
-        const admin = MOCK_USERS.find(u => u.username === 'stars');
-        
-        // 3. Combine
-        if (admin) {
-          initialUsers = [admin, ...others];
-        } else {
-          initialUsers = parsed;
+    const initAuth = async () => {
+      // 1. Check local session
+      const savedSession = localStorage.getItem('slss_user');
+      if (savedSession) {
+        try {
+          setUser(JSON.parse(savedSession));
+        } catch (e) {
+          localStorage.removeItem('slss_user');
         }
-      } catch (e) {
-        console.warn("Failed to parse local users DB, resetting to defaults.");
       }
-    }
 
-    setUsersList(initialUsers);
-    localStorage.setItem('slss_users_db', JSON.stringify(initialUsers));
-
-    // Check for active session
-    const savedSession = localStorage.getItem('slss_user');
-    if (savedSession) {
-      try {
-        const sessionUser = JSON.parse(savedSession);
-        // Validate session user still exists and update it with latest permissions/role
-        const freshUser = initialUsers.find(u => u.id === sessionUser.id);
-        if (freshUser) {
-          setUser(freshUser);
-        } else {
-          localStorage.removeItem('slss_user'); // Invalid session
-        }
-      } catch (e) {
-        localStorage.removeItem('slss_user');
-      }
-    }
-    setLoading(false);
+      // 2. Fetch all users (for admin management)
+      await fetchUsers();
+      
+      setLoading(false);
+    };
+    initAuth();
   }, []);
 
-  // Persist usersList whenever it changes
-  useEffect(() => {
-    if (usersList.length > 0) {
-      localStorage.setItem('slss_users_db', JSON.stringify(usersList));
+  const fetchUsers = async () => {
+    if (MOCK_MODE) {
+      if (usersList.length === 0) setUsersList(MOCK_USERS);
+      return;
     }
-  }, [usersList]);
+    try {
+      const res = await fetch('/api/users');
+      if (res.ok) {
+        const data = await res.json();
+        setUsersList(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch users");
+    }
+  };
 
   const login = async (username: string, password?: string): Promise<{success: boolean; message?: string}> => {
-    const foundUser = usersList.find(u => u.username === username);
-    
-    if (foundUser) {
-      if (foundUser.status === 'pending') {
-        return { success: false, message: '账号审核中，请联系管理员审批。' };
-      }
+    if (MOCK_MODE) {
+      await new Promise(r => setTimeout(r, 600)); // Simulate network delay
+      const sourceUsers = usersList.length > 0 ? usersList : MOCK_USERS;
+      const foundUser = sourceUsers.find(u => u.username === username && u.password === password);
 
-      if (foundUser.password && password !== foundUser.password) {
-        return { success: false, message: '密码错误。' };
+      if (foundUser) {
+        if (foundUser.status !== 'active') {
+          return { success: false, message: '账号审核中，请联系管理员' };
+        }
+        setUser(foundUser);
+        localStorage.setItem('slss_user', JSON.stringify(foundUser));
+        return { success: true };
       }
-
-      setUser(foundUser);
-      localStorage.setItem('slss_user', JSON.stringify(foundUser));
-      return { success: true };
+      return { success: false, message: '用户名或密码错误 (演示模式)' };
     }
-    return { success: false, message: '用户不存在。' };
+
+    try {
+      // Add Timeout Logic
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 seconds timeout
+
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+
+      const data = await res.json();
+      
+      if (data.success) {
+        setUser(data.user);
+        localStorage.setItem('slss_user', JSON.stringify(data.user));
+        return { success: true };
+      }
+      return { success: false, message: data.message || '登录失败' };
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        return { success: false, message: '服务器响应超时，请检查网络或联系管理员' };
+      }
+      return { success: false, message: '服务器连接失败' };
+    }
   };
 
   const register = async (data: RegisterData): Promise<{success: boolean; message?: string}> => {
-    if (usersList.some(u => u.username === data.username)) {
-      return { success: false, message: '用户名已存在' };
-    }
-
     const newUser: User = {
       id: Date.now(),
-      username: data.username,
-      password: data.password,
-      role: data.role,
-      status: 'pending', // Default status is pending approval
-      phone: data.phone,
+      ...data,
+      status: 'pending',
       permissions: getDefaultPermissions(data.role)
     };
 
-    setUsersList(prev => [...prev, newUser]);
-    return { success: true, message: '注册成功！请等待管理员审核通过。' };
+    if (MOCK_MODE) {
+       await new Promise(r => setTimeout(r, 600));
+       setUsersList(prev => [...prev, newUser]);
+       return { success: true, message: '注册申请已提交 (演示模式)' };
+    }
+
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUser)
+      });
+      const result = await res.json();
+      if (result.success) {
+        fetchUsers(); // Refresh list
+        return { success: true, message: '注册成功！请等待管理员审核。' };
+      }
+      return { success: false, message: result.message || '注册失败' };
+    } catch (e) {
+      return { success: false, message: '服务器错误' };
+    }
   };
 
   const logout = () => {
@@ -133,34 +153,81 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // --- Admin Functions ---
 
-  const updateUserStatus = (id: number, status: 'active' | 'pending') => {
-    setUsersList(prev => prev.map(u => u.id === id ? { ...u, status } : u));
+  const updateUserStatus = async (id: number, status: 'active' | 'pending') => {
+    if (MOCK_MODE) {
+      setUsersList(prev => prev.map(u => u.id === id ? { ...u, status } : u));
+      return;
+    }
+    try {
+      await fetch(`/api/users/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      setUsersList(prev => prev.map(u => u.id === id ? { ...u, status } : u));
+    } catch (e) { console.error(e); }
   };
 
-  const deleteUser = (id: number) => {
-    setUsersList(prev => prev.filter(u => u.id !== id));
+  const deleteUser = async (id: number) => {
+    if (MOCK_MODE) {
+      setUsersList(prev => prev.filter(u => u.id !== id));
+      return;
+    }
+    try {
+      await fetch(`/api/users/${id}`, { method: 'DELETE' });
+      setUsersList(prev => prev.filter(u => u.id !== id));
+    } catch (e) { console.error(e); }
   };
 
-  const addUser = (userData: Omit<User, 'id'>) => {
+  const addUser = async (userData: Omit<User, 'id'>) => {
     const newUser: User = {
-      ...userData,
       id: Date.now(),
-      permissions: userData.permissions.length > 0 ? userData.permissions : getDefaultPermissions(userData.role)
+      ...userData,
+      permissions: userData.permissions && userData.permissions.length > 0 
+        ? userData.permissions 
+        : getDefaultPermissions(userData.role)
     };
-    setUsersList(prev => [...prev, newUser]);
+
+    if (MOCK_MODE) {
+      setUsersList(prev => [...prev, newUser]);
+      return;
+    }
+
+    try {
+      await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUser)
+      });
+      fetchUsers();
+    } catch (e) { console.error(e); }
   };
 
   // Helper
   const getDefaultPermissions = (role: UserRole): Permission[] => {
     switch (role) {
       case UserRole.ADMIN:
-        return ['VIEW_DASHBOARD', 'VIEW_ORDERS', 'MANAGE_ORDERS', 'VIEW_PRODUCTION', 'MANAGE_PRODUCTION', 'MANAGE_SYSTEM'];
+        return [
+          'VIEW_DASHBOARD', 
+          'VIEW_ORDERS', 'MANAGE_ORDERS', 'DESIGN_PROCESS',
+          'PROD_ENTRY_ASSEMBLY', 'PROD_ENTRY_INSPECT_INIT', 'PROD_ENTRY_AGING', 'PROD_ENTRY_INSPECT_FINAL',
+          'PROD_REPAIR', 'PROD_QUERY',
+          'MANAGE_SYSTEM'
+        ];
       case UserRole.MANAGER:
-        return ['VIEW_DASHBOARD', 'VIEW_ORDERS', 'MANAGE_ORDERS', 'VIEW_PRODUCTION'];
+        return [
+          'VIEW_DASHBOARD', 
+          'VIEW_ORDERS', 'MANAGE_ORDERS', 
+          'PROD_QUERY'
+        ];
       case UserRole.TECHNICIAN:
         return ['VIEW_DASHBOARD', 'VIEW_ORDERS', 'MANAGE_ORDERS'];
       case UserRole.PRODUCTION:
-        return ['VIEW_DASHBOARD', 'VIEW_PRODUCTION', 'MANAGE_PRODUCTION'];
+        return [
+          'VIEW_DASHBOARD', 
+          'PROD_ENTRY_ASSEMBLY', 'PROD_ENTRY_INSPECT_INIT', 
+          'PROD_QUERY'
+        ];
       default:
         return ['VIEW_DASHBOARD'];
     }
